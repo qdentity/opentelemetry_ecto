@@ -18,8 +18,7 @@ defmodule OpentelemetryEcto do
     * `:time_unit` - a time unit used to convert the values of query phase
       timings, defaults to `:microsecond`. See `System.convert_time_unit/3`
 
-    * `:sampler` - an `:otel_sampler.t()` or a function that accepts the Ecto
-      Telemetry metadata and returns `:otel_sampler.t() | nil`.
+    * `:sampler` - an optional :otel_sampler.t()
 
     * `:span_prefix` - the first part of the span name, as a `String.t`,
       defaults to the concatenation of the event name with periods, e.g.
@@ -103,19 +102,12 @@ defmodule OpentelemetryEcto do
 
     parent_context_attached = maybe_attach_parent_context()
 
-    sampler =
-      case Keyword.fetch(config, :sampler) do
-        {:ok, sampler_fn} when is_function(sampler_fn) -> sampler_fn.(meta)
-        {:ok, sampler} -> sampler
-        :error -> nil
-      end
+    opts =
+      %{start_time: start_time, attributes: attributes ++ base_attributes}
+      |> maybe_put_sampler(config[:sampler])
 
-    opts = %{start_time: start_time, attributes: attributes ++ base_attributes}
-    opts = if sampler, do: Map.put(opts, :sampler, sampler), else: opts
-
-    s = OpenTelemetry.Tracer.start_span(span_name, opts)
-
-    OpenTelemetry.Span.end_span(s)
+    OpenTelemetry.Tracer.start_span(span_name, opts)
+    |> OpenTelemetry.Span.end_span()
 
     if parent_context_attached do
       OpenTelemetry.Ctx.clear()
@@ -153,6 +145,14 @@ defmodule OpentelemetryEcto do
       {:ok, parent_ctx}
     else
       false
+    end
+  end
+
+  defp maybe_put_sampler(opts, sampler) do
+    if sampler == nil do
+      opts
+    else
+      Map.put(opts, :sampler, sampler)
     end
   end
 end
