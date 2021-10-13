@@ -83,7 +83,35 @@ defmodule OpentelemetryEctoTest do
   end
 
   test "sampler option" do
-    attach_handler(sampler: my_sampler())
+    defmodule MySampler do
+      @behaviour :otel_sampler
+
+      def new(opts) do
+        :otel_sampler.new({__MODULE__, opts})
+      end
+
+      @impl true
+      def setup(opts), do: opts
+
+      @impl true
+      def description(_sampler), do: "my sampler"
+
+      @impl true
+      def should_sample(_ctx, _trace_id, _links, _span_name, _span_kind, attributes, opts) do
+        assert opts == :my_opts
+
+        decision =
+          case Keyword.fetch!(attributes, :source) do
+            "users" -> :record_and_sample
+            "posts" -> :drop
+          end
+
+        {decision, [], []}
+      end
+    end
+
+    sampler = :otel_sampler.new({MySampler, :my_opts})
+    attach_handler(sampler: sampler)
 
     Repo.all(User)
     Repo.all(Post)
@@ -95,8 +123,8 @@ defmodule OpentelemetryEctoTest do
   end
 
   test "sampler option with function" do
-    always_on = :otel_sampler.setup(:always_on)
-    always_off = :otel_sampler.setup(:always_off)
+    always_on = :otel_sampler.new(:always_on)
+    always_off = :otel_sampler.new(:always_off)
 
     attach_handler(
       sampler: fn
@@ -117,22 +145,6 @@ defmodule OpentelemetryEctoTest do
     assert_receive {:span, span(name: "opentelemetry_ecto.test_repo.query:users")}
     refute_receive {:span, span(name: "opentelemetry_ecto.test_repo.query:posts")}
     assert_receive {:span, span(name: "opentelemetry_ecto.test_repo.query:users")}
-  end
-
-  # when https://github.com/open-telemetry/opentelemetry-erlang/pull/260 is released you should
-  # use :otel_sampler.new(&sample/7, "my sampler", :my_opts) to create the sampler
-  defp my_sampler, do: {&sample/7, "my sampler", :my_opts}
-
-  defp sample(_ctx, _trace_id, _links, _span_name, _span_kind, attributes, opts) do
-    assert opts == :my_opts
-
-    decision =
-      case Keyword.fetch!(attributes, :source) do
-        "users" -> :record_and_sample
-        "posts" -> :drop
-      end
-
-    {decision, [], []}
   end
 
   test "preloads in sequence are tied to the parent span" do
